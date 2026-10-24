@@ -2,11 +2,11 @@
 
 Short Communication
 
-Hema1712638 a,*
+Hemasri Babburu a,*
 
-a Doctor of Business Administration candidate, DBA 802 Data Analytics and Strategic Decision Intelligence. Full postal address and country: to be supplied by the author.
+a Doctor of Business Administration candidate, DBA 802 Data Analytics and Strategic Decision Intelligence, Midwest University.
 
-* Corresponding author. Email: to be supplied by the author. The name above is the project identifier. Knowledge-Based Systems requires a given name and a family name, and those have not been supplied.
+* Corresponding author. Email: hemasribabburu@gmail.com
 
 ## Abstract
 
@@ -210,7 +210,7 @@ This research received no specific grant from any funding agency in the public, 
 
 ## CRediT authorship contribution statement
 
-Hema1712638: Conceptualization, Methodology, Software, Validation, Formal analysis, Investigation, Data curation, Writing – original draft, Writing – review and editing, Visualization.
+Hemasri Babburu: Conceptualization, Methodology, Software, Validation, Formal analysis, Investigation, Data curation, Writing – original draft, Writing – review and editing, Visualization.
 
 ## Declaration of generative AI and AI-assisted technologies in the manuscript preparation process
 
