@@ -11,7 +11,7 @@ pip install -r requirements.txt
 python3 kb_sdi.py
 ```
 
-The script runs 40 replications, then the sensitivity and assessment-noise checks. It rewrites `results.json`, `fig1_decision_map.png`, and `fig2_paired_accuracy.png`.
+The script runs 40 replications, then the sensitivity and assessment-noise checks. It rewrites `results.json` and `fig1_decision_map.png`.
 
 ## What the experiment compares
 
@@ -33,5 +33,4 @@ On the 40-replication benchmark, mean accuracy is 0.437, 0.467, 0.770, and 0.929
 | `highlights.txt` | Separate highlights file for submission (3–5 bullets, 85 characters each) |
 | `results.json` | Means, standard deviations, p-values, robustness |
 | `fig1_decision_map.png` | Oracle regions and false SCALE decisions |
-| `fig2_paired_accuracy.png` | Accuracy and paired gaps |
 | `requirements.txt` | Python dependencies |

@@ -135,7 +135,7 @@ On the high-capability, low-business-model slice, mean observed performance is 0
 
 The estimated interaction averages 0.649 (SD 0.226) against the process value 0.62. At 100 knowledge firms the coefficient is noisy. The decision does not require a precise coefficient. It requires the sign and the dependence on capability. Prediction error moves with that estimate: RMSE is 0.094 for analytics-only, 0.088 for rules-only, and 0.047 for KB-SDI.
 
-Table 2 reports the paired tests. KB-SDI had higher accuracy and lower regret than every baseline in 40 of 40 replications. The accuracy p-values are \(3.56 \times 10^{-8}\), \(3.57 \times 10^{-8}\), and \(3.55 \times 10^{-8}\). The regret p-value is \(1.82 \times 10^{-12}\) against each baseline. Those regret p-values match because the signed-rank statistic is fixed once every paired difference has the same sign [21]. The effect sizes are not the same. Mean accuracy gaps are +0.493, +0.463, and +0.159. Mean regret gaps are −0.061, −0.047, and −0.010. All six tests sit below the Bonferroni threshold of 0.0083. Fig. 2 shows the accuracy level and the paired gap in every replication. No replication crosses zero.
+Table 2 reports the paired tests. KB-SDI had higher accuracy and lower regret than every baseline in 40 of 40 replications. The accuracy p-values are \(3.56 \times 10^{-8}\), \(3.57 \times 10^{-8}\), and \(3.55 \times 10^{-8}\). The regret p-value is \(1.82 \times 10^{-12}\) against each baseline. Those regret p-values match because the signed-rank statistic is fixed once every paired difference has the same sign [21]. The effect sizes are not the same. Mean accuracy gaps are +0.493, +0.463, and +0.159. Mean regret gaps are −0.061, −0.047, and −0.010. All six tests sit below the Bonferroni threshold of 0.0083. The accuracy means are in Table 1. No paired accuracy gap crosses zero.
 
 The ordering is not an artifact of one sample size or one reservation value. The checks below rerun the first ten seeds (802 through 811). They are not an additional sample. With a knowledge sample of 40 firms, KB-SDI accuracy is 0.875 (SD 0.075), against 0.754 (SD 0.039) for rules-only and 0.466 for analytics-only. With 200 firms it is 0.933 (SD 0.028). At reservation values 0.38 and 0.46, KB-SDI accuracy is 0.933 (SD 0.026) and 0.912 (SD 0.037), and it remains first.
 
@@ -146,10 +146,6 @@ Explainability comes from Eq. (5) and Eq. (6), not from a post-hoc importance me
 ![Fig. 1. Oracle decision regions on the capability-by-business-model plane, with other covariates at their sample means. Points are held-out firms in replication 802 for which the named system selects SCALE while the oracle selects REDESIGN.](fig1_decision_map.png)
 
 **Fig. 1.** Oracle decision regions on the capability-by-business-model plane, with other covariates at their sample means. Points are held-out firms in replication 802 (\(n = 1{,}401\)) for which the named system selects SCALE while the oracle selects REDESIGN. Analytics-only produces 343 such firms. KB-SDI produces 1, on the boundary between SCALE and REDESIGN.
-
-![Fig. 2. Decision accuracy across 40 replications. Panel (a) shows the mean, with error bars of one standard deviation. Panel (b) shows the paired accuracy gap of KB-SDI against each baseline. The short horizontal mark is the mean gap. The dashed line is a gap of zero.](fig2_paired_accuracy.png)
-
-**Fig. 2.** Decision accuracy across 40 replications. Panel (a) shows the mean, with error bars of one standard deviation. Panel (b) shows the paired accuracy gap of KB-SDI against each baseline. The short horizontal mark is the mean gap. The dashed line is a gap of zero.
 
 **Table 1.** Decision quality on the held-out firms.
 
@@ -191,7 +187,7 @@ Across 40 replications, the knowledge rules were the dominant source of the gain
 
 ## Data Availability
 
-The firms used in this study are synthetic and reproducible. `kb_sdi.py` generates the populations, fits every system, runs the paired tests, the sensitivity sweep, and the assessment-noise stress test, and writes the figures. `results.json` stores the means, standard deviations, and p-values. Fixed seeds 802 through 841 regenerate the benchmark.
+The firms used in this study are synthetic and reproducible. `kb_sdi.py` generates the populations, fits every system, runs the paired tests, the sensitivity sweep, and the assessment-noise stress test, and writes the figure. `results.json` stores the means, standard deviations, and p-values. Fixed seeds 802 through 841 regenerate the benchmark.
 
 ## Declaration of Competing Interest
 

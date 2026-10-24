@@ -44,12 +44,6 @@ ACTIONS = ("HOLD", "SCALE", "REDESIGN")
 SYSTEMS = ("Threshold", "Analytics-only", "Rules-only", "KB-SDI")
 PREDICTORS = ("Analytics-only", "Rules-only", "KB-SDI")
 BASELINES = ("Threshold", "Analytics-only", "Rules-only")
-COLORS = {
-    "Threshold": "#6E6E6E",
-    "Analytics-only": "#C47B2B",
-    "Rules-only": "#8C6A4A",
-    "KB-SDI": "#1F4E79",
-}
 REGION_COLORS = ["#F4F4F4", "#E6A15C", "#7FA6C9"]
 ERROR_COLOR = "#8C1D18"
 FEATURE_NAMES = ("dac", "aic", "dti", "inn", "eo", "dq", "size", "age")
@@ -362,14 +356,6 @@ def robustness() -> dict:
     return report
 
 
-def _style_axis(ax) -> None:
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.tick_params(labelsize=8, colors="#1C1C1C")
-    ax.yaxis.grid(True, linestyle=":", linewidth=0.6, color="#C5CDD4")
-    ax.set_axisbelow(True)
-
-
 def draw_decision_map(detail: dict, path: Path) -> None:
     capability, business_model, grid = detail["grid"]
     extent = [capability[0], capability[-1], business_model[0], business_model[-1]]
@@ -408,50 +394,6 @@ def draw_decision_map(detail: dict, path: Path) -> None:
         Line2D([0], [0], marker="o", color="none", markerfacecolor=ERROR_COLOR, markersize=5, label="False SCALE"),
     ]
     fig.legend(handles=legend, loc="upper center", ncol=4, frameon=False, fontsize=8, bbox_to_anchor=(0.5, 1.08))
-    fig.tight_layout()
-    fig.savefig(path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-
-
-def draw_results(summary: dict, rows: list[dict], path: Path) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.55))
-    fig.patch.set_facecolor("white")
-    x = np.arange(len(SYSTEMS))
-    means = [summary[system]["accuracy"]["mean"] for system in SYSTEMS]
-    sds = [summary[system]["accuracy"]["sd"] for system in SYSTEMS]
-    bars = axes[0].bar(
-        x,
-        means,
-        yerr=sds,
-        color=[COLORS[system] for system in SYSTEMS],
-        width=0.72,
-        capsize=3,
-        error_kw={"elinewidth": 0.8, "ecolor": "#1C1C1C"},
-        edgecolor="white",
-    )
-    axes[0].set_xticks(x, ["Threshold", "Analytics\nonly", "Rules\nonly", "KB-SDI"], fontsize=8)
-    axes[0].set_ylim(0, 1.08)
-    axes[0].set_ylabel("Accuracy", fontsize=8)
-    axes[0].set_title("(a) Decision accuracy", loc="left", fontsize=9)
-    _style_axis(axes[0])
-    for bar, mean in zip(bars, means):
-        axes[0].text(bar.get_x() + bar.get_width() / 2, mean + 0.045, f"{mean:.3f}", ha="center", va="bottom", fontsize=7.5, color="#1C1C1C")
-
-    rng = np.random.default_rng(7)
-    gaps = {
-        "Threshold": np.array([row["KB-SDI"]["accuracy"] - row["Threshold"]["accuracy"] for row in rows]),
-        "Analytics-only": np.array([row["KB-SDI"]["accuracy"] - row["Analytics-only"]["accuracy"] for row in rows]),
-        "Rules-only": np.array([row["KB-SDI"]["accuracy"] - row["Rules-only"]["accuracy"] for row in rows]),
-    }
-    for position, (name, values) in enumerate(gaps.items()):
-        jitter = rng.uniform(-0.12, 0.12, len(values))
-        axes[1].scatter(np.full(len(values), position) + jitter, values, s=16, c=COLORS[name], alpha=0.85, linewidths=0, zorder=3)
-        axes[1].hlines(values.mean(), position - 0.28, position + 0.28, colors="#1C1C1C", linewidths=1.1, zorder=4)
-    axes[1].axhline(0.0, color="#1C1C1C", linewidth=0.7, linestyle="--")
-    axes[1].set_xticks([0, 1, 2], ["vs threshold", "vs analytics", "vs rules"], fontsize=8)
-    axes[1].set_ylabel("Accuracy gap (KB-SDI − baseline)", fontsize=8)
-    axes[1].set_title("(b) Paired gap in every replication", loc="left", fontsize=9)
-    _style_axis(axes[1])
     fig.tight_layout()
     fig.savefig(path, dpi=300, bbox_inches="tight")
     plt.close(fig)
@@ -535,7 +477,6 @@ def main() -> None:
     if detail is None:
         raise RuntimeError("Primary replication did not return the decision map.")
     draw_decision_map(detail, ROOT / "fig1_decision_map.png")
-    draw_results(summary, rows, ROOT / "fig2_paired_accuracy.png")
     print(markdown_tables(summary, tests))
     print("SLICE", json.dumps({
         "observed": summary["slice_observed_performance"],
