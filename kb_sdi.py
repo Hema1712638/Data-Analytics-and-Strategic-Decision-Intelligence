@@ -1,23 +1,27 @@
 """
-KB-SDI: a knowledge-based AI system for strategic decision intelligence.
+KB-SDI: knowledge-based strategic decision intelligence.
 
-The operational feature store records data-analytics and innovation signals.
-It does not record business-model change. A small knowledge sample estimates
-the capability x business-model-change mechanism. At decision time the two
-are fused, and the firm is assigned HOLD, SCALE, or REDESIGN.
+A gradient-boosting model reads the operational record. A four-parameter
+knowledge base, fit on firms where business-model change is assessed, prices
+the counterfactual value of a redesign. The decision is HOLD, SCALE, or
+REDESIGN.
 
-The firms in this study are synthetic. The data-generating process is
-implemented in `signal` and is not available to the decision systems.
+The firms are synthetic. The data-generating process in `signal` is not
+available to any decision system. Fixed seeds regenerate every reported number.
 """
 
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+from matplotlib.colors import ListedColormap
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+from scipy.stats import wilcoxon
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import accuracy_score, f1_score, mean_squared_error
 from sklearn.model_selection import train_test_split
@@ -31,15 +35,34 @@ BMC_TARGET = 0.82
 V_HOLD = 0.42
 COST_SCALE = 0.05
 COST_REDESIGN = 0.11
-SLICE_C = 0.55
+CAPABILITY_FLOOR = 0.55
 SLICE_BMC = 0.40
-SEEDS = list(range(802, 822))
+SEEDS = list(range(802, 842))
+PRIMARY_SEED = 802
 
 ACTIONS = ("HOLD", "SCALE", "REDESIGN")
-SYSTEMS = ("Rules-only", "Analytics-only", "KB-SDI")
-COLORS = {"Rules-only": "#8C6A4A", "Analytics-only": "#C47B2B", "KB-SDI": "#1F4E79"}
-
+SYSTEMS = ("Threshold", "Analytics-only", "Rules-only", "KB-SDI")
+PREDICTORS = ("Analytics-only", "Rules-only", "KB-SDI")
+BASELINES = ("Threshold", "Analytics-only", "Rules-only")
+COLORS = {
+    "Threshold": "#6E6E6E",
+    "Analytics-only": "#C47B2B",
+    "Rules-only": "#8C6A4A",
+    "KB-SDI": "#1F4E79",
+}
+REGION_COLORS = ["#F4F4F4", "#E6A15C", "#7FA6C9"]
+ERROR_COLOR = "#8C1D18"
 FEATURE_NAMES = ("dac", "aic", "dti", "inn", "eo", "dq", "size", "age")
+METRIC_KEYS = (
+    "accuracy",
+    "macro_f1",
+    "regret",
+    "false_scale_given_redesign",
+    "redesign_recall",
+    "slice_false_scale",
+    "slice_redesign_recall",
+    "slice_regret",
+)
 
 
 def simulate(n: int, seed: int) -> dict[str, np.ndarray]:
@@ -53,8 +76,7 @@ def simulate(n: int, seed: int) -> dict[str, np.ndarray]:
     size = rng.normal(0.0, 1.0, n)
     age = rng.uniform(0.0, 1.0, n)
     capability = np.clip(0.55 * dac + 0.45 * aic, 0.0, 1.0)
-    # Business-model change is a strategic assessment. It is generated
-    # independently of the operational features so the warehouse cannot proxy it.
+    # Independent of the operational features, so they cannot proxy it.
     business_model = np.clip(rng.beta(1.7, 2.0, n), 0.0, 1.0)
     return {
         "dac": dac,
@@ -71,7 +93,6 @@ def simulate(n: int, seed: int) -> dict[str, np.ndarray]:
 
 
 def signal(data: dict[str, np.ndarray], business_model: np.ndarray | None = None) -> np.ndarray:
-    """Expected performance. `business_model` overrides the observed assessment."""
     bmc = data["bmc"] if business_model is None else business_model
     data_quality_gain = 0.20 / (1.0 + np.exp(-10.0 * (data["dq"] - 0.55)))
     return (
@@ -84,21 +105,17 @@ def signal(data: dict[str, np.ndarray], business_model: np.ndarray | None = None
         + 0.06 * data["dti"]
         + data_quality_gain
         + 0.05 * data["dac"] * data["inn"]
-        + 0.02 * np.clip(data["size"], -2.0, 2.0) / 2.0
+        + 0.01 * np.clip(data["size"], -2.0, 2.0)
     )
 
 
 def payoffs(current: np.ndarray, counterfactual: np.ndarray, v_hold: float = V_HOLD) -> np.ndarray:
     hold = np.full(current.shape, v_hold)
-    scale = current - COST_SCALE
-    redesign = counterfactual - COST_REDESIGN
-    return np.column_stack([hold, scale, redesign])
+    return np.column_stack([hold, current - COST_SCALE, counterfactual - COST_REDESIGN])
 
 
 def estimate_mechanism(capability: np.ndarray, business_model: np.ndarray, performance: np.ndarray) -> np.ndarray:
-    design = np.column_stack(
-        [np.ones(len(capability)), capability, business_model, capability * business_model]
-    )
+    design = np.column_stack([np.ones(len(capability)), capability, business_model, capability * business_model])
     coefficients, *_ = np.linalg.lstsq(design, performance, rcond=None)
     return coefficients
 
@@ -109,8 +126,7 @@ def mechanism_prediction(coefficients: np.ndarray, capability: np.ndarray, busin
 
 
 def marginal_bmc_effect(coefficients: np.ndarray, capability: np.ndarray) -> np.ndarray:
-    _, _, bmc_coef, interaction = coefficients
-    return bmc_coef + interaction * capability
+    return coefficients[2] + coefficients[3] * capability
 
 
 def fit_analytics(features: np.ndarray, performance: np.ndarray, seed: int) -> GradientBoostingRegressor:
@@ -126,7 +142,19 @@ def fit_analytics(features: np.ndarray, performance: np.ndarray, seed: int) -> G
     return model
 
 
-def metrics_for(predicted: np.ndarray, oracle: np.ndarray, true_value: np.ndarray, slice_mask: np.ndarray) -> dict[str, float]:
+def _safe_rate(mask: np.ndarray, condition: np.ndarray) -> float:
+    denom = int(condition.sum())
+    if denom == 0:
+        return float("nan")
+    return float(mask.sum() / denom)
+
+
+def score_actions(
+    predicted: np.ndarray,
+    oracle: np.ndarray,
+    true_value: np.ndarray,
+    slice_mask: np.ndarray,
+) -> dict[str, float]:
     best = true_value.max(axis=1)
     chosen = true_value[np.arange(len(predicted)), predicted]
     redesign = oracle == 2
@@ -135,22 +163,45 @@ def metrics_for(predicted: np.ndarray, oracle: np.ndarray, true_value: np.ndarra
         "accuracy": float(accuracy_score(oracle, predicted)),
         "macro_f1": float(f1_score(oracle, predicted, average="macro", zero_division=0)),
         "regret": float((best - chosen).mean()),
-        "false_scale_given_redesign": float(((predicted == 1) & redesign).sum() / max(redesign.sum(), 1)),
-        "redesign_recall": float(((predicted == 2) & redesign).sum() / max(redesign.sum(), 1)),
-        "slice_redesign_recall": float(((predicted == 2) & slice_redesign).sum() / max(slice_redesign.sum(), 1)),
-        "slice_false_scale": float(((predicted == 1) & slice_redesign).sum() / max(slice_redesign.sum(), 1)),
+        "false_scale_given_redesign": _safe_rate((predicted == 1) & redesign, redesign),
+        "redesign_recall": _safe_rate((predicted == 2) & redesign, redesign),
+        "slice_false_scale": _safe_rate((predicted == 1) & slice_redesign, slice_redesign),
+        "slice_redesign_recall": _safe_rate((predicted == 2) & slice_redesign, slice_redesign),
         "slice_regret": float((best[slice_mask] - chosen[slice_mask]).mean()) if slice_mask.any() else float("nan"),
         "slice_n": int(slice_mask.sum()),
     }
 
 
-def evaluate_once(seed: int, knowledge_size: int = KNOWLEDGE_SIZE, v_hold: float = V_HOLD) -> dict:
+def oracle_grid(template: dict[str, np.ndarray], size: int = 180) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    means = {name: float(template[name].mean()) for name in FEATURE_NAMES}
+    capability = np.linspace(0.0, 1.0, size)
+    business_model = np.linspace(0.0, 1.0, size)
+    grid_c, grid_b = np.meshgrid(capability, business_model)
+    flat_c = grid_c.ravel()
+    flat_b = grid_b.ravel()
+    grid = {name: np.full(flat_c.size, means[name]) for name in FEATURE_NAMES}
+    grid["dac"] = flat_c
+    grid["aic"] = flat_c
+    grid["c"] = flat_c
+    grid["bmc"] = flat_b
+    current = signal(grid)
+    counterfactual = signal(grid, np.maximum(flat_b, BMC_TARGET))
+    actions = payoffs(current, counterfactual).argmax(axis=1).reshape(size, size)
+    return capability, business_model, actions
+
+
+def evaluate_once(
+    seed: int,
+    knowledge_size: int = KNOWLEDGE_SIZE,
+    v_hold: float = V_HOLD,
+    assessment_noise: float = 0.0,
+    return_detail: bool = False,
+) -> dict:
     data = simulate(N_FIRMS, seed)
-    noise = np.random.default_rng(seed + 17).normal(0.0, 0.04, N_FIRMS)
+    observed = np.clip(signal(data) + np.random.default_rng(seed + 17).normal(0.0, 0.04, N_FIRMS), 0.0, 1.0)
     expected = signal(data)
-    redesigned = np.maximum(data["bmc"], BMC_TARGET)
-    expected_redesign = signal(data, redesigned)
-    observed = np.clip(expected + noise, 0.0, 1.0)
+    redesigned_true = np.maximum(data["bmc"], BMC_TARGET)
+    expected_redesign = signal(data, redesigned_true)
     oracle = payoffs(expected, expected_redesign, v_hold).argmax(axis=1)
 
     index = np.arange(N_FIRMS)
@@ -158,217 +209,308 @@ def evaluate_once(seed: int, knowledge_size: int = KNOWLEDGE_SIZE, v_hold: float
     knowledge, operational = train[:knowledge_size], train[knowledge_size:]
     features = np.column_stack([data[name] for name in FEATURE_NAMES])
 
+    started = time.perf_counter()
     analytics = fit_analytics(features[operational], observed[operational], seed)
+    fit_seconds = time.perf_counter() - started
     predicted_now = analytics.predict(features[test])
+
     coefficients = estimate_mechanism(data["c"][knowledge], data["bmc"][knowledge], observed[knowledge])
+    if assessment_noise > 0:
+        shock = np.random.default_rng(seed + 99).normal(0.0, assessment_noise, N_FIRMS)
+        assessed = np.clip(data["bmc"] + shock, 0.0, 1.0)
+    else:
+        assessed = data["bmc"]
     effect = marginal_bmc_effect(coefficients, data["c"][test])
     baseline_bmc = float(data["bmc"][knowledge].mean())
+    assessed_test = assessed[test]
+    assessed_target = np.maximum(assessed_test, BMC_TARGET)
 
-    knowledge_current = mechanism_prediction(coefficients, data["c"][test], data["bmc"][test])
-    knowledge_counterfactual = mechanism_prediction(coefficients, data["c"][test], redesigned[test])
-    fused_current = np.clip(predicted_now + effect * (data["bmc"][test] - baseline_bmc), 0.0, 1.0)
-    fused_counterfactual = np.clip(predicted_now + effect * (redesigned[test] - baseline_bmc), 0.0, 1.0)
+    knowledge_current = mechanism_prediction(coefficients, data["c"][test], assessed_test)
+    knowledge_counterfactual = mechanism_prediction(coefficients, data["c"][test], assessed_target)
+    fused_current = np.clip(predicted_now + effect * (assessed_test - baseline_bmc), 0.0, 1.0)
+    fused_counterfactual = np.clip(predicted_now + effect * (assessed_target - baseline_bmc), 0.0, 1.0)
+    threshold = np.where(data["c"][test] >= CAPABILITY_FLOOR, 1, 0)
 
-    systems = {
-        "Rules-only": payoffs(knowledge_current, knowledge_counterfactual, v_hold),
-        "Analytics-only": payoffs(predicted_now, predicted_now, v_hold),
-        "KB-SDI": payoffs(fused_current, fused_counterfactual, v_hold),
+    decisions = {
+        "Threshold": threshold,
+        "Analytics-only": payoffs(predicted_now, predicted_now, v_hold).argmax(axis=1),
+        "Rules-only": payoffs(knowledge_current, knowledge_counterfactual, v_hold).argmax(axis=1),
+        "KB-SDI": payoffs(fused_current, fused_counterfactual, v_hold).argmax(axis=1),
     }
     truth = payoffs(expected[test], expected_redesign[test], v_hold)
-    high_capability_low_bmc = (data["c"][test] >= SLICE_C) & (data["bmc"][test] <= SLICE_BMC)
     oracle_test = oracle[test]
+    high_capability_low_bmc = (data["c"][test] >= CAPABILITY_FLOOR) & (data["bmc"][test] <= SLICE_BMC)
 
-    report = {
+    report: dict = {
         "seed": seed,
         "interaction": float(coefficients[3]),
-        "rmse": {
-            "Rules-only": float(mean_squared_error(observed[test], knowledge_current) ** 0.5),
-            "Analytics-only": float(mean_squared_error(observed[test], predicted_now) ** 0.5),
-            "KB-SDI": float(mean_squared_error(observed[test], fused_current) ** 0.5),
-        },
-        "slice_predicted_performance": {
-            "Analytics-only": float(predicted_now[high_capability_low_bmc].mean()),
-            "KB-SDI": float(fused_current[high_capability_low_bmc].mean()),
-            "observed": float(observed[test][high_capability_low_bmc].mean()),
-        },
+        "fit_seconds": fit_seconds,
+        "slice_n": int(high_capability_low_bmc.sum()),
     }
-    for name, value in systems.items():
-        report[name] = metrics_for(value.argmax(axis=1), oracle_test, truth, high_capability_low_bmc)
-        report[name]["rmse"] = report["rmse"][name]
+    predictions = {
+        "Analytics-only": predicted_now,
+        "Rules-only": knowledge_current,
+        "KB-SDI": fused_current,
+    }
+    for name, action in decisions.items():
+        report[name] = score_actions(action, oracle_test, truth, high_capability_low_bmc)
+        if name in predictions:
+            report[name]["rmse"] = float(mean_squared_error(observed[test], predictions[name]) ** 0.5)
+        else:
+            report[name]["rmse"] = float("nan")
+    if high_capability_low_bmc.any():
+        report["slice_observed"] = float(observed[test][high_capability_low_bmc].mean())
+        report["slice_predicted"] = {
+            name: float(predictions[name][high_capability_low_bmc].mean()) for name in PREDICTORS
+        }
+    if return_detail:
+        report["detail"] = {
+            "c": data["c"][test],
+            "bmc": data["bmc"][test],
+            "oracle": oracle_test,
+            "analytics": decisions["Analytics-only"],
+            "kbsdi": decisions["KB-SDI"],
+            "grid": oracle_grid(data),
+        }
     return report
 
 
-def _mean_sd(rows: list[dict], system: str, key: str) -> tuple[float, float]:
-    values = np.array([row[system][key] for row in rows], dtype=float)
-    return float(values.mean()), float(values.std(ddof=1))
+def _mean_sd(values: list[float]) -> dict[str, float]:
+    array = np.asarray(values, dtype=float)
+    array = array[np.isfinite(array)]
+    if array.size == 0:
+        return {"mean": float("nan"), "sd": float("nan")}
+    spread = float(array.std(ddof=1)) if array.size > 1 else 0.0
+    return {"mean": float(array.mean()), "sd": spread}
 
 
 def summarize(rows: list[dict]) -> dict:
-    summary = {"n_replications": len(rows), "wins": {}}
+    summary: dict = {"n_replications": len(rows)}
     for system in SYSTEMS:
         summary[system] = {}
-        for key in (
-            "accuracy",
-            "macro_f1",
-            "regret",
-            "false_scale_given_redesign",
-            "redesign_recall",
-            "slice_redesign_recall",
-            "slice_false_scale",
-            "slice_regret",
-            "rmse",
-        ):
-            mean, sd = _mean_sd(rows, system, key)
-            summary[system][key] = {"mean": mean, "sd": sd}
-    kb_vs_rules = np.array([row["KB-SDI"]["accuracy"] - row["Rules-only"]["accuracy"] for row in rows])
-    kb_vs_analytics = np.array([row["KB-SDI"]["accuracy"] - row["Analytics-only"]["accuracy"] for row in rows])
-    summary["wins"] = {
-        "accuracy_beats_rules": int((kb_vs_rules > 0).sum()),
-        "accuracy_beats_analytics": int((kb_vs_analytics > 0).sum()),
-        "accuracy_gap_vs_rules": {"mean": float(kb_vs_rules.mean()), "sd": float(kb_vs_rules.std(ddof=1))},
-        "accuracy_gap_vs_analytics": {"mean": float(kb_vs_analytics.mean()), "sd": float(kb_vs_analytics.std(ddof=1))},
-    }
-    interaction = np.array([row["interaction"] for row in rows])
-    summary["interaction"] = {"mean": float(interaction.mean()), "sd": float(interaction.std(ddof=1))}
-    for system in ("Analytics-only", "KB-SDI"):
-        predicted = np.array([row["slice_predicted_performance"][system] for row in rows])
-        summary[system]["slice_predicted_performance"] = {
-            "mean": float(predicted.mean()),
-            "sd": float(predicted.std(ddof=1)),
+        for key in (*METRIC_KEYS, "rmse"):
+            summary[system][key] = _mean_sd([row[system][key] for row in rows])
+    for system in PREDICTORS:
+        summary[system]["slice_predicted_performance"] = _mean_sd(
+            [row["slice_predicted"][system] for row in rows]
+        )
+    summary["slice_observed_performance"] = _mean_sd([row["slice_observed"] for row in rows])
+    summary["slice_n"] = _mean_sd([row["slice_n"] for row in rows])
+    summary["interaction"] = _mean_sd([row["interaction"] for row in rows])
+    summary["fit_seconds"] = _mean_sd([row["fit_seconds"] for row in rows])
+    summary["wins"] = {}
+    for baseline in BASELINES:
+        accuracy_gap = np.array([row["KB-SDI"]["accuracy"] - row[baseline]["accuracy"] for row in rows])
+        regret_gap = np.array([row["KB-SDI"]["regret"] - row[baseline]["regret"] for row in rows])
+        summary["wins"][baseline] = {
+            "accuracy_wins": int((accuracy_gap > 0).sum()),
+            "regret_wins": int((regret_gap < 0).sum()),
+            "accuracy_gap": _mean_sd(accuracy_gap.tolist()),
+            "regret_gap": _mean_sd(regret_gap.tolist()),
         }
-    observed = np.array([row["slice_predicted_performance"]["observed"] for row in rows])
-    summary["slice_observed_performance"] = {"mean": float(observed.mean()), "sd": float(observed.std(ddof=1))}
-    summary["slice_n_mean"] = float(np.mean([row["KB-SDI"]["slice_n"] for row in rows]))
     return summary
 
 
-def robustness(knowledge_sizes: tuple[int, ...] = (40, 200), holds: tuple[float, ...] = (0.38, 0.46)) -> dict:
+def paired_tests(rows: list[dict]) -> list[dict]:
+    tests = []
+    for baseline in BASELINES:
+        for metric in ("accuracy", "regret"):
+            proposed = np.array([row["KB-SDI"][metric] for row in rows], dtype=float)
+            reference = np.array([row[baseline][metric] for row in rows], dtype=float)
+            difference = proposed - reference
+            if np.allclose(difference, 0.0):
+                p_value = 1.0
+            else:
+                p_value = float(wilcoxon(proposed, reference, alternative="two-sided", zero_method="wilcox").pvalue)
+            favors = int((difference > 0).sum()) if metric == "accuracy" else int((difference < 0).sum())
+            tests.append(
+                {
+                    "baseline": baseline,
+                    "metric": metric,
+                    "baseline_mean": float(reference.mean()),
+                    "kbsdi_mean": float(proposed.mean()),
+                    "mean_difference": float(difference.mean()),
+                    "p_value": p_value,
+                    "replications_favoring_kbsdi": favors,
+                    "n": int(len(rows)),
+                }
+            )
+    return tests
+
+
+def robustness() -> dict:
     seeds = SEEDS[:10]
-    report: dict = {"knowledge_size": {}, "reservation_value": {}}
-    for size in knowledge_sizes:
+    report: dict = {"knowledge_size": {}, "reservation_value": {}, "assessment_noise": {}}
+    for size in (40, 200):
         rows = [evaluate_once(seed, knowledge_size=size) for seed in seeds]
         report["knowledge_size"][str(size)] = {
             system: summarize(rows)[system]["accuracy"] for system in SYSTEMS
         }
-    for hold in holds:
+    for hold in (0.38, 0.46):
         rows = [evaluate_once(seed, v_hold=hold) for seed in seeds]
         report["reservation_value"][f"{hold:.2f}"] = {
             system: summarize(rows)[system]["accuracy"] for system in SYSTEMS
         }
+    noisy = [evaluate_once(seed, assessment_noise=0.10) for seed in seeds]
+    report["assessment_noise"]["0.10"] = {
+        system: {
+            "accuracy": summarize(noisy)[system]["accuracy"],
+            "false_scale_given_redesign": summarize(noisy)[system]["false_scale_given_redesign"],
+        }
+        for system in SYSTEMS
+    }
     return report
 
 
-def draw_architecture(path: Path) -> None:
-    fig, ax = plt.subplots(figsize=(10.4, 4.6))
-    ax.set_xlim(0, 10.4)
-    ax.set_ylim(0, 4.6)
-    ax.axis("off")
+def _style_axis(ax) -> None:
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.tick_params(labelsize=8, colors="#1C1C1C")
+    ax.yaxis.grid(True, linestyle=":", linewidth=0.6, color="#C5CDD4")
+    ax.set_axisbelow(True)
+
+
+def draw_decision_map(detail: dict, path: Path) -> None:
+    capability, business_model, grid = detail["grid"]
+    extent = [capability[0], capability[-1], business_model[0], business_model[-1]]
+    cmap = ListedColormap(REGION_COLORS)
+    fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.55), sharex=True, sharey=True)
     fig.patch.set_facecolor("white")
-
-    def box(x, y, w, h, text, face, edge="#1F2A33"):
-        patch = FancyBboxPatch(
-            (x, y), w, h,
-            boxstyle="round,pad=0.04,rounding_size=0.08",
-            facecolor=face, edgecolor=edge, linewidth=1.0,
+    panels = (
+        (axes[0], detail["analytics"], "(a) Analytics only"),
+        (axes[1], detail["kbsdi"], "(b) KB-SDI"),
+    )
+    for ax, chosen, title in panels:
+        ax.imshow(grid, origin="lower", extent=extent, cmap=cmap, vmin=0, vmax=2, interpolation="nearest", aspect="auto")
+        false_scale = (chosen == 1) & (detail["oracle"] == 2)
+        ax.scatter(
+            detail["c"][false_scale],
+            detail["bmc"][false_scale],
+            s=9,
+            c=ERROR_COLOR,
+            alpha=0.55,
+            linewidths=0,
+            rasterized=True,
         )
-        ax.add_patch(patch)
-        ax.text(x + w / 2, y + h / 2, text, ha="center", va="center", fontsize=8.4, color="#1F2A33", linespacing=1.25)
-
-    def arrow(x1, y1, x2, y2):
-        ax.add_patch(FancyArrowPatch((x1, y1), (x2, y2), arrowstyle="-|>", mutation_scale=12, linewidth=1.1, color="#1F2A33"))
-
-    box(0.25, 2.85, 2.5, 1.25, "Operational data\nanalytics capability, AI capability,\ninnovation, entrepreneurship,\ndata quality", "#E7EEF5")
-    box(0.25, 0.45, 2.5, 1.25, "Knowledge sample\ncapability and\nbusiness-model change\n(100 firms)", "#F4EBE1")
-    box(3.35, 2.85, 2.7, 1.25, "Analytics model\ngradient boosting\npredicts current\nperformance", "#E7EEF5")
-    box(3.35, 0.45, 2.7, 1.25, "Knowledge base\nperformance rises with\ncapability only if the\nbusiness model changes", "#F4EBE1")
-    box(6.65, 1.45, 2.15, 1.65, "Decision layer\nHOLD\nSCALE\nREDESIGN", "#E5EFE8", "#1F4E79")
-    box(9.05, 1.7, 1.15, 1.15, "Strategic\ndecision", "#1F4E79", "#1F4E79")
-    ax.texts[-1].set_color("white")
-
-    arrow(2.75, 3.47, 3.35, 3.47)
-    arrow(2.75, 1.07, 3.35, 1.07)
-    arrow(6.05, 3.47, 7.7, 2.85)
-    arrow(6.05, 1.07, 7.7, 1.70)
-    arrow(8.80, 2.27, 9.05, 2.27)
-    ax.set_title("Knowledge-based strategic decision intelligence", loc="left", fontsize=11, color="#1F2A33", pad=8)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.set_xlabel("Capability index", fontsize=8)
+        ax.set_title(f"{title}   false SCALE n = {int(false_scale.sum())}", loc="left", fontsize=9, color="#1C1C1C")
+        for spine in ax.spines.values():
+            spine.set_color("#1C1C1C")
+            spine.set_linewidth(0.6)
+        ax.tick_params(labelsize=8)
+    axes[0].set_ylabel("Business-model change", fontsize=8)
+    legend = [
+        Patch(facecolor=REGION_COLORS[0], edgecolor="#B0B0B0", label="Oracle HOLD"),
+        Patch(facecolor=REGION_COLORS[1], edgecolor="#B0B0B0", label="Oracle SCALE"),
+        Patch(facecolor=REGION_COLORS[2], edgecolor="#B0B0B0", label="Oracle REDESIGN"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor=ERROR_COLOR, markersize=5, label="False SCALE"),
+    ]
+    fig.legend(handles=legend, loc="upper center", ncol=4, frameon=False, fontsize=8, bbox_to_anchor=(0.5, 1.08))
     fig.tight_layout()
     fig.savefig(path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
-def draw_results(summary: dict, path: Path) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(9.6, 4.1))
+def draw_results(summary: dict, rows: list[dict], path: Path) -> None:
+    fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.55))
     fig.patch.set_facecolor("white")
     x = np.arange(len(SYSTEMS))
-    panels = (
-        (axes[0], "accuracy", "Decision accuracy", "Accuracy"),
-        (axes[1], "false_scale_given_redesign", "False SCALE rate when REDESIGN is best", "Rate"),
+    means = [summary[system]["accuracy"]["mean"] for system in SYSTEMS]
+    sds = [summary[system]["accuracy"]["sd"] for system in SYSTEMS]
+    bars = axes[0].bar(
+        x,
+        means,
+        yerr=sds,
+        color=[COLORS[system] for system in SYSTEMS],
+        width=0.72,
+        capsize=3,
+        error_kw={"elinewidth": 0.8, "ecolor": "#1C1C1C"},
+        edgecolor="white",
     )
-    for ax, key, title, ylabel in panels:
-        means = [summary[system][key]["mean"] for system in SYSTEMS]
-        sds = [summary[system][key]["sd"] for system in SYSTEMS]
-        bars = ax.bar(
-            x, means, yerr=sds, color=[COLORS[system] for system in SYSTEMS],
-            width=0.72, capsize=4, error_kw={"elinewidth": 1.0, "ecolor": "#1F2A33"},
-            edgecolor="white",
-        )
-        ax.set_xticks(x, ["Rules only", "Analytics only", "KB-SDI"])
-        ax.set_ylim(0, 1.05)
-        ax.set_ylabel(ylabel)
-        ax.set_title(title, loc="left", fontsize=10, color="#1F2A33")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.yaxis.grid(True, linestyle=":", linewidth=0.6, color="#B7BFC7")
-        ax.set_axisbelow(True)
-        for bar, mean in zip(bars, means):
-            ax.text(bar.get_x() + bar.get_width() / 2, min(mean + 0.06, 0.98), f"{mean:.2f}", ha="center", va="bottom", fontsize=8, color="#1F2A33")
-    fig.suptitle("Decision quality across 20 replications", fontsize=11, color="#1F2A33", x=0.02, ha="left")
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    axes[0].set_xticks(x, ["Threshold", "Analytics\nonly", "Rules\nonly", "KB-SDI"], fontsize=8)
+    axes[0].set_ylim(0, 1.08)
+    axes[0].set_ylabel("Accuracy", fontsize=8)
+    axes[0].set_title("(a) Decision accuracy", loc="left", fontsize=9)
+    _style_axis(axes[0])
+    for bar, mean in zip(bars, means):
+        axes[0].text(bar.get_x() + bar.get_width() / 2, mean + 0.045, f"{mean:.2f}", ha="center", va="bottom", fontsize=7.5, color="#1C1C1C")
+
+    rng = np.random.default_rng(7)
+    gaps = {
+        "Threshold": np.array([row["KB-SDI"]["accuracy"] - row["Threshold"]["accuracy"] for row in rows]),
+        "Analytics-only": np.array([row["KB-SDI"]["accuracy"] - row["Analytics-only"]["accuracy"] for row in rows]),
+        "Rules-only": np.array([row["KB-SDI"]["accuracy"] - row["Rules-only"]["accuracy"] for row in rows]),
+    }
+    for position, (name, values) in enumerate(gaps.items()):
+        jitter = rng.uniform(-0.12, 0.12, len(values))
+        axes[1].scatter(np.full(len(values), position) + jitter, values, s=16, c=COLORS[name], alpha=0.85, linewidths=0, zorder=3)
+        axes[1].hlines(values.mean(), position - 0.28, position + 0.28, colors="#1C1C1C", linewidths=1.1, zorder=4)
+    axes[1].axhline(0.0, color="#1C1C1C", linewidth=0.7, linestyle="--")
+    axes[1].set_xticks([0, 1, 2], ["vs threshold", "vs analytics", "vs rules"], fontsize=8)
+    axes[1].set_ylabel("Accuracy gap (KB-SDI − baseline)", fontsize=8)
+    axes[1].set_title("(b) Paired gap in every replication", loc="left", fontsize=9)
+    _style_axis(axes[1])
+    fig.tight_layout()
     fig.savefig(path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
-def markdown_table(summary: dict) -> str:
-    def cell(system: str, key: str) -> str:
-        stat = summary[system][key]
-        return f"{stat['mean']:.3f} ({stat['sd']:.3f})"
+def _cell(stat: dict, digits: int = 3) -> str:
+    if stat["mean"] != stat["mean"]:
+        return "—"
+    return f"{stat['mean']:.{digits}f} ({stat['sd']:.{digits}f})"
 
-    header = "| System | Accuracy | Macro-F1 | Regret | RMSE | False SCALE | REDESIGN recall |\n|---|---:|---:|---:|---:|---:|---:|"
-    lines = [header]
+
+def markdown_tables(summary: dict, tests: list[dict]) -> str:
+    lines = [
+        "| System | Accuracy | Macro-F1 | Regret | RMSE | False SCALE | REDESIGN recall |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
     for system in SYSTEMS:
+        rmse = summary[system]["rmse"]
+        rmse_text = "—" if rmse["mean"] != rmse["mean"] else _cell(rmse)
         lines.append(
             "| {name} | {acc} | {f1} | {reg} | {rmse} | {fs} | {rec} |".format(
                 name=system,
-                acc=cell(system, "accuracy"),
-                f1=cell(system, "macro_f1"),
-                reg=cell(system, "regret"),
-                rmse=cell(system, "rmse"),
-                fs=cell(system, "false_scale_given_redesign"),
-                rec=cell(system, "redesign_recall"),
+                acc=_cell(summary[system]["accuracy"]),
+                f1=_cell(summary[system]["macro_f1"]),
+                reg=_cell(summary[system]["regret"]),
+                rmse=rmse_text,
+                fs=_cell(summary[system]["false_scale_given_redesign"]),
+                rec=_cell(summary[system]["redesign_recall"]),
             )
         )
-    slice_header = "\n| System | REDESIGN recall | False SCALE | Regret | Predicted performance |\n|---|---:|---:|---:|---:|"
-    slice_lines = [slice_header]
-    for system in SYSTEMS:
-        predicted = "—"
-        if "slice_predicted_performance" in summary[system]:
-            stat = summary[system]["slice_predicted_performance"]
-            predicted = f"{stat['mean']:.3f} ({stat['sd']:.3f})"
-        slice_lines.append(
-            "| {name} | {rec} | {fs} | {reg} | {pred} |".format(
-                name=system,
-                rec=cell(system, "slice_redesign_recall"),
-                fs=cell(system, "slice_false_scale"),
-                reg=cell(system, "slice_regret"),
-                pred=predicted,
+    lines.append("")
+    lines.append("| Comparison | Metric | Baseline | KB-SDI | Difference | p | Favoring |")
+    lines.append("|---|---|---:|---:|---:|---:|---:|")
+    for test in tests:
+        lines.append(
+            "| KB-SDI vs {baseline} | {metric} | {base:.3f} | {kb:.3f} | {diff:.3f} | {p:.3e} | {wins}/{n} |".format(
+                baseline=test["baseline"],
+                metric=test["metric"],
+                base=test["baseline_mean"],
+                kb=test["kbsdi_mean"],
+                diff=test["mean_difference"],
+                p=test["p_value"],
+                wins=test["replications_favoring_kbsdi"],
+                n=test["n"],
             )
         )
-    return "\n".join(lines) + "\n" + "\n".join(slice_lines) + "\n"
+    return "\n".join(lines)
 
 
 def main() -> None:
-    rows = [evaluate_once(seed) for seed in SEEDS]
+    rows = []
+    detail = None
+    for seed in SEEDS:
+        row = evaluate_once(seed, return_detail=(seed == PRIMARY_SEED))
+        if seed == PRIMARY_SEED:
+            detail = row.pop("detail")
+        rows.append(row)
     summary = summarize(rows)
+    tests = paired_tests(rows)
     checks = robustness()
     payload = {
         "design": {
@@ -377,23 +519,34 @@ def main() -> None:
             "knowledge_size": KNOWLEDGE_SIZE,
             "replications": len(SEEDS),
             "seeds": SEEDS,
+            "primary_seed": PRIMARY_SEED,
             "bmc_target": BMC_TARGET,
             "v_hold": V_HOLD,
             "cost_scale": COST_SCALE,
             "cost_redesign": COST_REDESIGN,
-            "slice": {"capability_at_least": SLICE_C, "business_model_at_most": SLICE_BMC},
+            "capability_floor": CAPABILITY_FLOOR,
+            "slice_bmc_at_most": SLICE_BMC,
         },
         "summary": summary,
+        "paired_tests": tests,
         "robustness": checks,
     }
     (ROOT / "results.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    draw_architecture(ROOT / "fig1_architecture.png")
-    draw_results(summary, ROOT / "fig2_results.png")
-    print(markdown_table(summary))
-    print("wins", json.dumps(summary["wins"]))
-    print("interaction", json.dumps(summary["interaction"]))
-    print("slice_observed", json.dumps(summary["slice_observed_performance"]))
-    print("robustness", json.dumps(checks))
+    if detail is None:
+        raise RuntimeError("Primary replication did not return the decision map.")
+    draw_decision_map(detail, ROOT / "fig1_decision_map.png")
+    draw_results(summary, rows, ROOT / "fig2_paired_accuracy.png")
+    print(markdown_tables(summary, tests))
+    print("SLICE", json.dumps({
+        "observed": summary["slice_observed_performance"],
+        "n": summary["slice_n"],
+        "predicted": {system: summary[system]["slice_predicted_performance"] for system in PREDICTORS},
+        "false_scale": {system: summary[system]["slice_false_scale"] for system in SYSTEMS},
+        "recall": {system: summary[system]["slice_redesign_recall"] for system in SYSTEMS},
+    }))
+    print("INTERACTION", json.dumps(summary["interaction"]))
+    print("FIT", json.dumps(summary["fit_seconds"]))
+    print("ROBUST", json.dumps(checks))
 
 
 if __name__ == "__main__":
