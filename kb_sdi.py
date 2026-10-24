@@ -435,7 +435,7 @@ def draw_results(summary: dict, rows: list[dict], path: Path) -> None:
     axes[0].set_title("(a) Decision accuracy", loc="left", fontsize=9)
     _style_axis(axes[0])
     for bar, mean in zip(bars, means):
-        axes[0].text(bar.get_x() + bar.get_width() / 2, mean + 0.045, f"{mean:.2f}", ha="center", va="bottom", fontsize=7.5, color="#1C1C1C")
+        axes[0].text(bar.get_x() + bar.get_width() / 2, mean + 0.045, f"{mean:.3f}", ha="center", va="bottom", fontsize=7.5, color="#1C1C1C")
 
     rng = np.random.default_rng(7)
     gaps = {

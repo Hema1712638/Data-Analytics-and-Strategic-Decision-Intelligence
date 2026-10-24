@@ -30,6 +30,7 @@ On the 40-replication benchmark, mean accuracy is 0.437, 0.467, 0.770, and 0.929
 |---|---|
 | `kb_sdi.py` | Simulation, knowledge base, boosting model, tests, figures |
 | `paper.md` | Short communication |
+| `highlights.txt` | Separate highlights file for submission (3–5 bullets, 85 characters each) |
 | `results.json` | Means, standard deviations, p-values, robustness |
 | `fig1_decision_map.png` | Oracle regions and false SCALE decisions |
 | `fig2_paired_accuracy.png` | Accuracy and paired gaps |
