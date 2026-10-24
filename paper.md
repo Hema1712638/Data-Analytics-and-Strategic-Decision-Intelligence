@@ -1,25 +1,18 @@
-# A knowledge-based AI system for strategic decision intelligence: using data analytics to guide digital-transformation, innovation, and entrepreneurial decisions
+# A Knowledge-Based AI System for Strategic Decision Intelligence: Using Data Analytics to Guide Digital-Transformation, Innovation, and Entrepreneurial Decisions
 
 Short Communication
 
-Hemasri Babburu a,*
+Hemasri Babburu
 
-a Doctor of Business Administration candidate, DBA 802 Data Analytics and Strategic Decision Intelligence, Midwest University.
+Doctor of Business Administration candidate, Midwest University
 
-* Corresponding author. Email: hemasribabburu@gmail.com
+Corresponding author. Email: hemasribabburu@gmail.com
 
 ## Abstract
 
 Strategic decision intelligence is the choice among holding, scaling, and redesigning, not a forecast of current performance. This short communication presents a knowledge-based strategic decision intelligence system (KB-SDI) that separates those judgments for digital-transformation, innovation, and entrepreneurial decisions. Gradient boosting estimates current performance from operational data. A four-parameter knowledge base, fit on 100 firms in which business-model change is assessed, supplies the mechanism the warehouse does not store: capability raises performance only when the business model changes, and it prices the counterfactual value of a redesign. Across 40 replications of 5,000 synthetic firms, mean decision accuracy was 0.929 for KB-SDI, 0.770 for the knowledge rules alone, 0.467 for analytics alone, and 0.437 for a capability threshold. Mean regret was 0.0010, 0.011, 0.048, and 0.062. Analytics alone selected SCALE in 0.577 of the cases where REDESIGN was optimal. In the illustrative replication, that error covered 343 held-out firms, against 1 firm for KB-SDI. Paired Wilcoxon tests favored KB-SDI on accuracy and regret in 40 of 40 replications. The firms are synthetic. No claim is made that the boosting model is itself a new learner. The contribution is the knowledge layer that turns the forecast into a strategic action.
 
 **Keywords:** knowledge-based system; decision intelligence; data analytics; artificial intelligence; digital transformation; business model; entrepreneurship
-
-## Highlights
-
-- Knowledge rules, not a larger forecast, stop false SCALE decisions.
-- Analytics alone scaled 343 firms the oracle would redesign.
-- KB-SDI beat three baselines in all 40 replications.
-- Noisy business-model assessment is the observed failure mode.
 
 ## 1. Introduction
 
@@ -31,7 +24,7 @@ Knowledge-based systems exist for this split. An algebraic rule can be integrate
 
 KB-SDI differs from a performance model in two structural ways. Analytics-only has no redesign action: its counterfactual equals its current prediction, so redesign is always more expensive than scaling by the difference in action costs (Section 2.3). Rules-only has the redesign action but cannot see innovation, entrepreneurial orientation, or data quality. Section 4 separates those contributions. The knowledge rules produce the large drop in false SCALE decisions. The operational model produces the further gain in accuracy and regret.
 
-## 2. Proposed KB-SDI framework
+## 2. Proposed KB-SDI Framework
 
 ### 2.1 Decision model
 
@@ -109,7 +102,7 @@ Output: action in \(\{\text{HOLD}, \text{SCALE}, \text{REDESIGN}\}\)
 
 The reproducible workload is one boosting fit and one four-parameter least-squares fit. In this run the mean boosting fit took 0.84 s (SD 0.01 s). Runtime is hardware-dependent. The knowledge step is negligible beside it.
 
-## 3. Experimental design
+## 3. Experimental Design
 
 A reproducible synthetic benchmark was generated with 5,000 entrepreneurial firms in each of 40 replications (seeds 802 through 841). Fixed seeds regenerate every table and figure from `kb_sdi.py`.
 
@@ -130,7 +123,7 @@ Four policies are compared. Threshold and analytics-only have no redesign action
 
 The slice discussed with Table 1 is the test firms with \(c \ge 0.55\) and \(bmc \le 0.40\) (mean \(n = 231\), SD 13). These are the firms the introduction is about: capability is high, and the business model has not moved. Fig. 1 uses the seed-802 test set (\(n = 1{,}401\)) and, as background, the oracle action on a capability-by-business-model grid with the other covariates held at their sample means.
 
-## 4. Results and discussion
+## 4. Results and Discussion
 
 Table 1 shows the separation the decision requires. KB-SDI mean accuracy is 0.929 (SD 0.021) and mean regret is 0.0010 (SD 0.0005). Rules-only, which keeps the knowledge layer and drops the operational model, reaches 0.770 (SD 0.017) and regret 0.011 (SD 0.001). Analytics-only reaches 0.467 (SD 0.008) and regret 0.048 (SD 0.002). The capability threshold reaches 0.437 (SD 0.007) and regret 0.062 (SD 0.002). The knowledge layer is the dominant source of improvement. Fusion with the operational forecast is the smaller, still material, second gain: accuracy rises by 0.159 and regret falls by 0.010 relative to rules alone. That split matters for practice. A multi-criteria score of analytics capability [24] still has to be turned into hold, scale, or redesign. Linking entrepreneurial orientation or innovation performance to analytics [13,25] does not, by itself, create the redesign action.
 
@@ -196,25 +189,25 @@ This short communication presented KB-SDI, a knowledge-based system for strategi
 
 Across 40 replications, the knowledge rules were the dominant source of the gain over analytics, and the operational forecast was the further gain over the rules alone. KB-SDI cut the false SCALE rate from 0.577 to 0.014 and raised accuracy from 0.467 to 0.929, with lower regret than every baseline in every replication. The system is a decision layer, not a claim of a new learning algorithm. Its output is an action a leader can audit: hold, scale, or redesign the business model first.
 
-## Data availability
+## Data Availability
 
 The firms used in this study are synthetic and reproducible. `kb_sdi.py` generates the populations, fits every system, runs the paired tests, the sensitivity sweep, and the assessment-noise stress test, and writes the figures. `results.json` stores the means, standard deviations, and p-values. Fixed seeds 802 through 841 regenerate the benchmark.
 
-## Declaration of competing interest
+## Declaration of Competing Interest
 
 The author declares that there are no known competing financial interests or personal relationships that could have appeared to influence the work reported in this manuscript.
+
+## Declaration of Generative AI and AI-Assisted Technologies
+
+During the preparation of this work the author used an AI-assisted writing tool for language drafting, organization, and formatting support. After using this tool, the author reviewed and edited the content as needed and takes full responsibility for the content of the published article. The experimental data, tables, and figures were generated from executable simulation code.
 
 ## Funding
 
 This research received no specific grant from any funding agency in the public, commercial, or not-for-profit sectors.
 
-## CRediT authorship contribution statement
+## CRediT Authorship Contribution Statement
 
 Hemasri Babburu: Conceptualization, Methodology, Software, Validation, Formal analysis, Investigation, Data curation, Writing – original draft, Writing – review and editing, Visualization.
-
-## Declaration of generative AI and AI-assisted technologies in the manuscript preparation process
-
-During the preparation of this work the author used an AI-assisted writing tool for language drafting, organization, and formatting support. After using this tool, the author reviewed and edited the content as needed and takes full responsibility for the content of the published article. The experimental data, tables, and figures were generated from executable simulation code.
 
 ## References
 
